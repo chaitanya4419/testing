@@ -1,0 +1,109 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: aiops-coreai-issue-categorization-python
+spec:
+  description: |
+    This pipeline clones a git repo, then builds a Docker image from a Dockerfile located in a specified folder.
+  params:
+    - default: 'https://github.ibm.com/IBM-Consulting-AIOps/aiops-coreai-issue-categorization-template-based-app-python.git'
+      description: The git repo URL to clone from.
+      name: repo-url
+      type: string
+    - default: dev
+      description: Revision to be used from the repo for deployment.
+      name: git-revision
+      type: string
+    - default: 'de.icr.io/aiops-dev2/issue-categorization-template:tekton'
+      description: Docker image
+      name: image
+      type: string
+    - default: |
+        ls -lrt
+        cd issue_classification/k8s/
+        ls -lrt
+        sed -i 's/name: de.icr.io/name: all-icr-io/g' deployment.yaml
+        sed -i 's/TAG/tekton/g' deployment.yaml
+        cat deployment.yaml
+        oc apply -f serviceAccount.yaml -n aiops2-dev
+        oc apply -f service.yaml -n aiops2-dev
+        oc apply -f deployment.yaml -n aiops2-dev
+        oc apply -f route.yaml -n aiops2-dev
+      description: oc commands to run in the deploy stage.
+      name: SCRIPT
+      type: string
+    - default: $(context.pipeline.name)
+      description: Git clone will happen in this folder.
+      name: subdirectory
+      type: string
+    - default: issue_classification
+      name: CONTEXT
+      type: string
+    - default: $(context.pipeline.name)
+      name: PROJECT-NAME
+      type: string
+  tasks:
+    - name: fetch-repo
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: subdirectory
+          value: $(params.subdirectory)
+        - name: deleteExisting
+          value: 'true'
+        - name: revision
+          value: $(params.git-revision)
+      taskRef:
+        kind: ClusterTask
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: shared-data
+    - name: dso-contrast-sast
+      params:
+        - name: PROJECT-NAME
+          value: $(params.PROJECT-NAME)
+      runAfter:
+        - fetch-repo
+      taskRef:
+        kind: Task
+        name: dso-sast-analysis
+      workspaces:
+        - name: output
+          subPath: $(context.pipeline.name)
+          workspace: shared-data
+    - name: buildah
+      params:
+        - name: IMAGE
+          value: $(params.image)
+        - name: TLSVERIFY
+          value: 'false'
+        - name: CONTEXT
+          value: $(params.CONTEXT)
+      runAfter:
+        - dso-contrast-sast
+      taskRef:
+        kind: ClusterTask
+        name: buildah
+      workspaces:
+        - name: source
+          subPath: $(context.pipeline.name)
+          workspace: shared-data
+    - name: deploy
+      params:
+        - name: SCRIPT
+          value: $(params.SCRIPT)
+      runAfter:
+        - buildah
+      taskRef:
+        kind: ClusterTask
+        name: openshift-client
+      workspaces:
+        - name: manifest-dir
+          subPath: $(context.pipeline.name)
+          workspace: shared-data
+        - name: kubeconfig-dir
+          workspace: kubeconfig-cm
+  workspaces:
+    - name: shared-data
+    - name: kubeconfig-cm
