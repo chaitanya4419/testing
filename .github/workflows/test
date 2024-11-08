@@ -1,0 +1,16 @@
+name: Frontend
+
+on:
+  workflow_dispatch:
+
+
+jobs:
+  Checkout:
+    runs-on: Ubuntu
+
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.17.0'
